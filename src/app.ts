@@ -1,6 +1,15 @@
-import { createElement as h, render, useState } from "./mini-react.js";
+import { createElement as h, render, useState, type ElementNode } from "./mini-react.js";
 
-function CounterCard({ label }) {
+type Item = {
+  id: string;
+  label: string;
+};
+
+type CounterCardProps = {
+  label: string;
+};
+
+function CounterCard({ label }: CounterCardProps): ElementNode {
   const [count, setCount] = useState(0);
 
   return h(
@@ -27,9 +36,9 @@ function CounterCard({ label }) {
   );
 }
 
-function App() {
+function App(): ElementNode {
   const [reverse, setReverse] = useState(false);
-  const [items, setItems] = useState([
+  const [items, setItems] = useState<Item[]>([
     { id: "a", label: "Alpha" },
     { id: "b", label: "Beta" },
     { id: "c", label: "Gamma" },
@@ -87,4 +96,8 @@ function App() {
 }
 
 const root = document.getElementById("root");
+if (!root) {
+  throw new Error("Root element #root was not found.");
+}
+
 render(h(App, null), root);

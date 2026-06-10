@@ -1,6 +1,50 @@
 const TEXT_ELEMENT = "TEXT_ELEMENT";
 
-function createTextElement(value) {
+type Key = string | number | null;
+type Component<P = any> = (props: P) => ElementNode | null;
+type ElementType = string | typeof TEXT_ELEMENT | Component<any>;
+type ChildValue = ElementNode | string | number | boolean | null | undefined;
+type Child = ChildValue | ChildValue[];
+type StateUpdater<T> = T | ((prev: T) => T);
+
+export type PropsConfig = Record<string, unknown> & {
+  key?: Key;
+};
+
+export type ElementNode = {
+  type: ElementType;
+  key: Key;
+  props: PropsConfig & {
+    children: ElementNode[];
+    nodeValue?: string;
+  };
+};
+
+type Hook<T = unknown> = {
+  state: T;
+};
+
+type Instance = {
+  element: ElementNode;
+  dom: Node | null;
+  rootContainer: Element;
+  childInstances?: Instance[];
+  hooks?: Hook[];
+  hookIndex?: number;
+};
+
+type FunctionInstance = Instance & {
+  hooks: Hook[];
+  hookIndex: number;
+  childInstance: Instance | null;
+};
+
+type RootRecord = {
+  element: ElementNode | null;
+  instance: Instance | null;
+};
+
+function createTextElement(value: string | number): ElementNode {
   return {
     type: TEXT_ELEMENT,
     key: null,
@@ -11,12 +55,16 @@ function createTextElement(value) {
   };
 }
 
-export function createElement(type, config, ...childrenArgs) {
-  const props = { ...(config || {}) };
+export function createElement(
+  type: ElementType,
+  config: PropsConfig | null = null,
+  ...childrenArgs: Child[]
+): ElementNode {
+  const props: PropsConfig & { children: ElementNode[] } = { ...(config || {}), children: [] };
   const key = props.key ?? null;
   delete props.key;
 
-  const flatChildren = childrenArgs.flat();
+  const flatChildren = childrenArgs.flat() as ChildValue[];
   props.children = flatChildren
     .filter((child) => child !== null && child !== undefined && child !== false && child !== true)
     .map((child) => (typeof child === "object" ? child : createTextElement(child)));
@@ -24,42 +72,42 @@ export function createElement(type, config, ...childrenArgs) {
   return { type, key, props };
 }
 
-const roots = new Map();
-let currentFunctionInstance = null;
+const roots = new Map<Element, RootRecord>();
+let currentFunctionInstance: FunctionInstance | null = null;
 
-export function render(element, container) {
+export function render(element: ElementNode, container: Element): void {
   const root = roots.get(container) || { element: null, instance: null };
   const nextInstance = reconcile(container, root.instance, element, container);
   roots.set(container, { element, instance: nextInstance });
 }
 
-function rerender(container) {
+function rerender(container: Element): void {
   const root = roots.get(container);
-  if (!root) return;
+  if (!root || !root.element) return;
   const nextInstance = reconcile(container, root.instance, root.element, container);
   roots.set(container, { ...root, instance: nextInstance });
 }
 
-export function useState(initialValue) {
+export function useState<T>(initialValue: T | (() => T)): [T, (nextValue: StateUpdater<T>) => void] {
   if (!currentFunctionInstance) {
     throw new Error("useState can only be called inside a function component.");
   }
 
-  const hooks = currentFunctionInstance.hooks;
+  const hooks = currentFunctionInstance.hooks as Hook<T>[];
   const idx = currentFunctionInstance.hookIndex++;
 
   if (hooks.length <= idx) {
     hooks.push({
-      state: typeof initialValue === "function" ? initialValue() : initialValue,
+      state: typeof initialValue === "function" ? (initialValue as () => T)() : initialValue,
     });
   }
 
   const hook = hooks[idx];
   const container = currentFunctionInstance.rootContainer;
 
-  function setState(nextValue) {
+  function setState(nextValue: StateUpdater<T>): void {
     const prev = hook.state;
-    const next = typeof nextValue === "function" ? nextValue(prev) : nextValue;
+    const next = typeof nextValue === "function" ? (nextValue as (value: T) => T)(prev) : nextValue;
     if (Object.is(prev, next)) return;
     hook.state = next;
     rerender(container);
@@ -68,11 +116,16 @@ export function useState(initialValue) {
   return [hook.state, setState];
 }
 
-function reconcile(parentDom, instance, element, rootContainer) {
+function reconcile(
+  parentDom: Node,
+  instance: Instance | null,
+  element: ElementNode | null,
+  rootContainer: Element
+): Instance | null {
   if (instance == null) {
     if (element == null) return null;
     const newInstance = instantiate(element, rootContainer);
-    if (newInstance && newInstance.dom) {
+    if (newInstance?.dom) {
       parentDom.appendChild(newInstance.dom);
     }
     return newInstance;
@@ -87,7 +140,7 @@ function reconcile(parentDom, instance, element, rootContainer) {
 
   if (instance.element.type !== element.type) {
     const newInstance = instantiate(element, rootContainer);
-    if (instance.dom && newInstance && newInstance.dom) {
+    if (instance.dom && newInstance?.dom) {
       parentDom.replaceChild(newInstance.dom, instance.dom);
     } else if (instance.dom && !newInstance?.dom) {
       parentDom.removeChild(instance.dom);
@@ -98,44 +151,46 @@ function reconcile(parentDom, instance, element, rootContainer) {
   }
 
   if (typeof element.type === "function") {
-    instance.element = element;
-    instance.rootContainer = rootContainer;
-    instance.hookIndex = 0;
+    const functionInstance = instance as FunctionInstance;
+    functionInstance.element = element;
+    functionInstance.rootContainer = rootContainer;
+    functionInstance.hookIndex = 0;
 
     const prevInstance = currentFunctionInstance;
-    currentFunctionInstance = instance;
+    currentFunctionInstance = functionInstance;
     const childElement = element.type(element.props);
     currentFunctionInstance = prevInstance;
 
-    const oldChildInstance = instance.childInstance;
-    const childInstance = reconcile(parentDom, oldChildInstance, childElement, rootContainer);
+    const childInstance = reconcile(parentDom, functionInstance.childInstance, childElement, rootContainer);
 
-    instance.dom = childInstance ? childInstance.dom : null;
-    instance.childInstance = childInstance;
-    return instance;
+    functionInstance.dom = childInstance ? childInstance.dom : null;
+    functionInstance.childInstance = childInstance;
+    return functionInstance;
   }
 
   if (element.type === TEXT_ELEMENT) {
-    if (instance.dom.nodeValue !== element.props.nodeValue) {
-      instance.dom.nodeValue = element.props.nodeValue;
+    if (instance.dom?.nodeValue !== element.props.nodeValue) {
+      instance.dom!.nodeValue = element.props.nodeValue ?? "";
     }
     instance.element = element;
     return instance;
   }
 
-  updateDomProperties(instance.dom, instance.element.props, element.props);
+  updateDomProperties(instance.dom as HTMLElement, instance.element.props, element.props);
   instance.childInstances = reconcileChildrenByKey(instance, element, rootContainer);
   instance.element = element;
   return instance;
 }
 
-function reconcileChildrenByKey(instance, element, rootContainer) {
+function reconcileChildrenByKey(instance: Instance, element: ElementNode, rootContainer: Element): Instance[] {
   const parentDom = instance.dom;
+  if (!parentDom) return [];
+
   const oldChildInstances = instance.childInstances || [];
   const newChildElements = element.props.children || [];
 
-  const oldKeyed = new Map();
-  const oldUnkeyed = [];
+  const oldKeyed = new Map<Key, Instance>();
+  const oldUnkeyed: Instance[] = [];
 
   for (const oldInstance of oldChildInstances) {
     const oldKey = oldInstance.element.key;
@@ -147,11 +202,11 @@ function reconcileChildrenByKey(instance, element, rootContainer) {
   }
 
   let unkeyedIndex = 0;
-  const nextChildInstances = [];
+  const nextChildInstances: Instance[] = [];
 
   for (const childElement of newChildElements) {
-    const key = childElement?.key;
-    let matchedOld = null;
+    const key = childElement.key;
+    let matchedOld: Instance | null = null;
 
     if (key !== null && key !== undefined) {
       matchedOld = oldKeyed.get(key) || null;
@@ -186,13 +241,13 @@ function reconcileChildrenByKey(instance, element, rootContainer) {
   return nextChildInstances;
 }
 
-function instantiate(element, rootContainer) {
+function instantiate(element: ElementNode | null, rootContainer: Element): Instance | null {
   if (element == null) return null;
 
   const { type, props } = element;
 
   if (typeof type === "function") {
-    const instance = {
+    const instance: FunctionInstance = {
       element,
       dom: null,
       childInstance: null,
@@ -213,7 +268,7 @@ function instantiate(element, rootContainer) {
   }
 
   if (type === TEXT_ELEMENT) {
-    const dom = document.createTextNode(props.nodeValue);
+    const dom = document.createTextNode(props.nodeValue ?? "");
     return {
       element,
       dom,
@@ -225,10 +280,9 @@ function instantiate(element, rootContainer) {
   const dom = document.createElement(type);
   updateDomProperties(dom, {}, props);
 
-  const childElements = props.children || [];
-  const childInstances = childElements
+  const childInstances = props.children
     .map((childElement) => instantiate(childElement, rootContainer))
-    .filter(Boolean);
+    .filter((childInstance): childInstance is Instance => Boolean(childInstance));
 
   for (const childInstance of childInstances) {
     if (childInstance.dom) dom.appendChild(childInstance.dom);
@@ -242,15 +296,15 @@ function instantiate(element, rootContainer) {
   };
 }
 
-function updateDomProperties(dom, prevProps, nextProps) {
-  const isEvent = (name) => name.startsWith("on");
-  const isProperty = (name) => name !== "children" && !isEvent(name);
+function updateDomProperties(dom: HTMLElement, prevProps: PropsConfig, nextProps: PropsConfig): void {
+  const isEvent = (name: string) => name.startsWith("on");
+  const isProperty = (name: string) => name !== "children" && !isEvent(name);
 
   for (const name of Object.keys(prevProps)) {
     if (isEvent(name)) {
       const eventType = name.toLowerCase().slice(2);
-      const prevHandler = prevProps[name];
-      const nextHandler = nextProps[name];
+      const prevHandler = prevProps[name] as EventListener | undefined;
+      const nextHandler = nextProps[name] as EventListener | undefined;
       if (prevHandler && (!nextHandler || prevHandler !== nextHandler)) {
         dom.removeEventListener(eventType, prevHandler);
       }
@@ -266,8 +320,8 @@ function updateDomProperties(dom, prevProps, nextProps) {
   for (const name of Object.keys(nextProps)) {
     if (isEvent(name)) {
       const eventType = name.toLowerCase().slice(2);
-      const prevHandler = prevProps[name];
-      const nextHandler = nextProps[name];
+      const prevHandler = prevProps[name] as EventListener | undefined;
+      const nextHandler = nextProps[name] as EventListener | undefined;
       if (prevHandler !== nextHandler && nextHandler) {
         if (prevHandler) dom.removeEventListener(eventType, prevHandler);
         dom.addEventListener(eventType, nextHandler);
@@ -282,9 +336,9 @@ function updateDomProperties(dom, prevProps, nextProps) {
   }
 }
 
-function setProperty(dom, name, value) {
+function setProperty(dom: HTMLElement, name: string, value: unknown): void {
   if (name === "className") {
-    dom.setAttribute("class", value);
+    dom.setAttribute("class", String(value));
     return;
   }
 
@@ -294,14 +348,14 @@ function setProperty(dom, name, value) {
   }
 
   if (name in dom) {
-    dom[name] = value;
+    (dom as unknown as Record<string, unknown>)[name] = value;
     return;
   }
 
-  dom.setAttribute(name, value);
+  dom.setAttribute(name, String(value));
 }
 
-function removeProperty(dom, name, oldValue) {
+function removeProperty(dom: HTMLElement, name: string, oldValue: unknown): void {
   if (name === "className") {
     dom.removeAttribute("class");
     return;
@@ -309,13 +363,13 @@ function removeProperty(dom, name, oldValue) {
 
   if (name === "style" && typeof oldValue === "object" && oldValue !== null) {
     for (const styleName of Object.keys(oldValue)) {
-      dom.style[styleName] = "";
+      dom.style[styleName as never] = "";
     }
     return;
   }
 
   if (name in dom) {
-    dom[name] = "";
+    (dom as unknown as Record<string, unknown>)[name] = "";
     return;
   }
 

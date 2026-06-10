@@ -8,14 +8,27 @@
 
 ## 快速运行
 
-在目录下启动静态服务：
+安装依赖并编译 TypeScript：
 
 ```bash
-cd /home/zhiyuan/dev/mini-react
+cd /Users/zhiyuan/dev/mini-react
+npm install
+npm run build
+```
+
+然后启动静态服务：
+
+```bash
 python3 -m http.server 5177
 ```
 
 浏览器打开：`http://localhost:5177`
+
+如果只想检查类型，不生成 `dist/`：
+
+```bash
+npm run check
+```
 
 ## 你会看到什么
 
@@ -27,6 +40,8 @@ python3 -m http.server 5177
 
 ## 核心实现说明
 
+- `src/mini-react.ts`：核心实现源码，带 TypeScript 类型
+- `dist/`：TypeScript 编译后的浏览器运行产物
 - `createElement`：把 JSX 心智模型变成虚拟节点对象
 - `render/reconcile`：递归对比新旧树，决定增删改
 - `instantiate`：首次把虚拟节点转成真实 DOM
