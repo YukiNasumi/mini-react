@@ -11,7 +11,7 @@ function createTextElement(value) {
   };
 }
 
-function createElement(type, config, ...childrenArgs) {
+export function createElement(type, config, ...childrenArgs) {
   const props = { ...(config || {}) };
   const key = props.key ?? null;
   delete props.key;
@@ -27,7 +27,7 @@ function createElement(type, config, ...childrenArgs) {
 const roots = new Map();
 let currentFunctionInstance = null;
 
-function render(element, container) {
+export function render(element, container) {
   const root = roots.get(container) || { element: null, instance: null };
   const nextInstance = reconcile(container, root.instance, element, container);
   roots.set(container, { element, instance: nextInstance });
@@ -40,7 +40,7 @@ function rerender(container) {
   roots.set(container, { ...root, instance: nextInstance });
 }
 
-function useState(initialValue) {
+export function useState(initialValue) {
   if (!currentFunctionInstance) {
     throw new Error("useState can only be called inside a function component.");
   }
@@ -321,9 +321,3 @@ function removeProperty(dom, name, oldValue) {
 
   dom.removeAttribute(name);
 }
-
-window.MiniReact = {
-  createElement,
-  render,
-  useState,
-};

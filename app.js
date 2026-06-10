@@ -1,4 +1,4 @@
-const { createElement: h, render, useState } = MiniReact;
+import { createElement as h, render, useState } from "./mini-react.js";
 
 function CounterCard({ label }) {
   const [count, setCount] = useState(0);
