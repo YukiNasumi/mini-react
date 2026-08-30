@@ -24,20 +24,28 @@ type Hook<T = unknown> = {
   state: T;
 };
 
-type Instance = {
+type BaseInstance = {
   element: ElementNode;
   dom: Node | null;
   rootContainer: Element;
-  childInstances?: Instance[];
-  hooks?: Hook[];
-  hookIndex?: number;
 };
 
-type FunctionInstance = Instance & {
+type TextInstance = BaseInstance & {
+  dom: Text;
+};
+
+type DomInstance = BaseInstance & {
+  dom: HTMLElement;
+  childInstances: Instance[];
+};
+
+type FunctionInstance = BaseInstance & {
   hooks: Hook[];
   hookIndex: number;
   childInstance: Instance | null;
 };
+
+type Instance = TextInstance | DomInstance | FunctionInstance;
 
 type RootRecord = {
   element: ElementNode | null;
@@ -169,24 +177,24 @@ function reconcile(
   }
 
   if (element.type === TEXT_ELEMENT) {
-    if (instance.dom?.nodeValue !== element.props.nodeValue) {
-      instance.dom!.nodeValue = element.props.nodeValue ?? "";
+    const textInstance = instance as TextInstance;
+    if (textInstance.dom.nodeValue !== element.props.nodeValue) {
+      textInstance.dom.nodeValue = element.props.nodeValue ?? "";
     }
-    instance.element = element;
-    return instance;
+    textInstance.element = element;
+    return textInstance;
   }
 
-  updateDomProperties(instance.dom as HTMLElement, instance.element.props, element.props);
-  instance.childInstances = reconcileChildrenByKey(instance, element, rootContainer);
-  instance.element = element;
-  return instance;
+  const domInstance = instance as DomInstance;
+  updateDomProperties(domInstance.dom, domInstance.element.props, element.props);
+  domInstance.childInstances = reconcileChildrenByKey(domInstance, element, rootContainer);
+  domInstance.element = element;
+  return domInstance;
 }
 
-function reconcileChildrenByKey(instance: Instance, element: ElementNode, rootContainer: Element): Instance[] {
+function reconcileChildrenByKey(instance: DomInstance, element: ElementNode, rootContainer: Element): Instance[] {
   const parentDom = instance.dom;
-  if (!parentDom) return [];
-
-  const oldChildInstances = instance.childInstances || [];
+  const oldChildInstances = instance.childInstances;
   const newChildElements = element.props.children || [];
 
   const oldKeyed = new Map<Key, Instance>();
@@ -272,7 +280,6 @@ function instantiate(element: ElementNode | null, rootContainer: Element): Insta
     return {
       element,
       dom,
-      childInstances: [],
       rootContainer,
     };
   }
