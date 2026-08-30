@@ -1,9 +1,9 @@
 const TEXT_ELEMENT = "TEXT_ELEMENT";
 
 type Key = string | number | null;
-type Component<P = any> = (props: P) => ElementNode | null;
+type Component<P = any> = (props: P) => ReactElement | null;
 type ElementType = string | typeof TEXT_ELEMENT | Component<any>;
-type ChildValue = ElementNode | string | number | boolean | null | undefined;
+type ChildValue = ReactElement | string | number | boolean | null | undefined;
 type Child = ChildValue | ChildValue[];
 type StateUpdater<T> = T | ((prev: T) => T);
 
@@ -11,11 +11,11 @@ export type PropsConfig = Record<string, unknown> & {
   key?: Key;
 };
 
-export type ElementNode = {
+export type ReactElement = {
   type: ElementType;
   key: Key;
   props: PropsConfig & {
-    children: ElementNode[];
+    children: ReactElement[];
     nodeValue?: string;
   };
 };
@@ -24,35 +24,40 @@ type Hook<T = unknown> = {
   state: T;
 };
 
-type BaseInstance = {
-  element: ElementNode;
+type BaseFiber = {
+  element: ReactElement;
   dom: Node | null;
   rootContainer: Element;
 };
 
-type TextInstance = BaseInstance & {
+type TextFiber = BaseFiber & {
   dom: Text;
 };
 
-type DomInstance = BaseInstance & {
+type DomFiber = BaseFiber & {
   dom: HTMLElement;
-  childInstances: Instance[];
+  childFibers: Fiber[];
 };
 
-type FunctionInstance = BaseInstance & {
+type FunctionFiber = BaseFiber & {
   hooks: Hook[];
   hookIndex: number;
-  childInstance: Instance | null;
+  childFiber: Fiber | null;
 };
 
-type Instance = TextInstance | DomInstance | FunctionInstance;
+type Fiber = TextFiber | DomFiber | FunctionFiber;
+
+// TODO: A real Fiber implementation also needs interruptible units of work,
+// child/sibling/return links, current/work-in-progress double buffering with
+// alternate pointers, update priorities/lanes, separate render and commit
+// phases, and effect collection followed by a unified commit.
 
 type RootRecord = {
-  element: ElementNode | null;
-  instance: Instance | null;
+  element: ReactElement | null;
+  fiber: Fiber | null;
 };
 
-function createTextElement(value: string | number): ElementNode {
+function createTextElement(value: string | number): ReactElement {
   return {
     type: TEXT_ELEMENT,
     key: null,
@@ -67,8 +72,8 @@ export function createElement(
   type: ElementType,
   config: PropsConfig | null = null,
   ...childrenArgs: Child[]
-): ElementNode {
-  const props: PropsConfig & { children: ElementNode[] } = { ...(config || {}), children: [] };
+): ReactElement {
+  const props: PropsConfig & { children: ReactElement[] } = { ...(config || {}), children: [] };
   const key = props.key ?? null;
   delete props.key;
 
@@ -81,28 +86,28 @@ export function createElement(
 }
 
 const roots = new Map<Element, RootRecord>();
-let currentFunctionInstance: FunctionInstance | null = null;
+let currentFunctionFiber: FunctionFiber | null = null;
 
-export function render(element: ElementNode, container: Element): void {
-  const root = roots.get(container) || { element: null, instance: null };
-  const nextInstance = reconcile(container, root.instance, element, container);
-  roots.set(container, { element, instance: nextInstance });
+export function render(element: ReactElement, container: Element): void {
+  const root = roots.get(container) || { element: null, fiber: null };
+  const nextFiber = reconcile(container, root.fiber, element, container);
+  roots.set(container, { element, fiber: nextFiber });
 }
 
 function rerender(container: Element): void {
   const root = roots.get(container);
   if (!root || !root.element) return;
-  const nextInstance = reconcile(container, root.instance, root.element, container);
-  roots.set(container, { ...root, instance: nextInstance });
+  const nextFiber = reconcile(container, root.fiber, root.element, container);
+  roots.set(container, { ...root, fiber: nextFiber });
 }
 
 export function useState<T>(initialValue: T | (() => T)): [T, (nextValue: StateUpdater<T>) => void] {
-  if (!currentFunctionInstance) {
+  if (!currentFunctionFiber) {
     throw new Error("useState can only be called inside a function component.");
   }
 
-  const hooks = currentFunctionInstance.hooks as Hook<T>[];
-  const idx = currentFunctionInstance.hookIndex++;
+  const hooks = currentFunctionFiber.hooks as Hook<T>[];
+  const idx = currentFunctionFiber.hookIndex++;
 
   if (hooks.length <= idx) {
     hooks.push({
@@ -111,7 +116,7 @@ export function useState<T>(initialValue: T | (() => T)): [T, (nextValue: StateU
   }
 
   const hook = hooks[idx];
-  const container = currentFunctionInstance.rootContainer;
+  const container = currentFunctionFiber.rootContainer;
 
   function setState(nextValue: StateUpdater<T>): void {
     const prev = hook.state;
@@ -126,95 +131,95 @@ export function useState<T>(initialValue: T | (() => T)): [T, (nextValue: StateU
 
 function reconcile(
   parentDom: Node,
-  instance: Instance | null,
-  element: ElementNode | null,
+  fiber: Fiber | null,
+  element: ReactElement | null,
   rootContainer: Element
-): Instance | null {
-  if (instance == null) {
+): Fiber | null {
+  if (fiber == null) {
     if (element == null) return null;
-    const newInstance = instantiate(element, rootContainer);
-    if (newInstance?.dom) {
-      parentDom.appendChild(newInstance.dom);
+    const newFiber = createFiber(element, rootContainer);
+    if (newFiber?.dom) {
+      parentDom.appendChild(newFiber.dom);
     }
-    return newInstance;
+    return newFiber;
   }
 
   if (element == null) {
-    if (instance.dom) {
-      parentDom.removeChild(instance.dom);
+    if (fiber.dom) {
+      parentDom.removeChild(fiber.dom);
     }
     return null;
   }
 
-  if (instance.element.type !== element.type) {
-    const newInstance = instantiate(element, rootContainer);
-    if (instance.dom && newInstance?.dom) {
-      parentDom.replaceChild(newInstance.dom, instance.dom);
-    } else if (instance.dom && !newInstance?.dom) {
-      parentDom.removeChild(instance.dom);
-    } else if (!instance.dom && newInstance?.dom) {
-      parentDom.appendChild(newInstance.dom);
+  if (fiber.element.type !== element.type) {
+    const newFiber = createFiber(element, rootContainer);
+    if (fiber.dom && newFiber?.dom) {
+      parentDom.replaceChild(newFiber.dom, fiber.dom);
+    } else if (fiber.dom && !newFiber?.dom) {
+      parentDom.removeChild(fiber.dom);
+    } else if (!fiber.dom && newFiber?.dom) {
+      parentDom.appendChild(newFiber.dom);
     }
-    return newInstance;
+    return newFiber;
   }
 
   if (typeof element.type === "function") {
-    const functionInstance = instance as FunctionInstance;
-    functionInstance.element = element;
-    functionInstance.rootContainer = rootContainer;
-    functionInstance.hookIndex = 0;
+    const functionFiber = fiber as FunctionFiber;
+    functionFiber.element = element;
+    functionFiber.rootContainer = rootContainer;
+    functionFiber.hookIndex = 0;
 
-    const prevInstance = currentFunctionInstance;
-    currentFunctionInstance = functionInstance;
+    const prevFiber = currentFunctionFiber;
+    currentFunctionFiber = functionFiber;
     const childElement = element.type(element.props);
-    currentFunctionInstance = prevInstance;
+    currentFunctionFiber = prevFiber;
 
-    const childInstance = reconcile(parentDom, functionInstance.childInstance, childElement, rootContainer);
+    const childFiber = reconcile(parentDom, functionFiber.childFiber, childElement, rootContainer);
 
-    functionInstance.dom = childInstance ? childInstance.dom : null;
-    functionInstance.childInstance = childInstance;
-    return functionInstance;
+    functionFiber.dom = childFiber ? childFiber.dom : null;
+    functionFiber.childFiber = childFiber;
+    return functionFiber;
   }
 
   if (element.type === TEXT_ELEMENT) {
-    const textInstance = instance as TextInstance;
-    if (textInstance.dom.nodeValue !== element.props.nodeValue) {
-      textInstance.dom.nodeValue = element.props.nodeValue ?? "";
+    const textFiber = fiber as TextFiber;
+    if (textFiber.dom.nodeValue !== element.props.nodeValue) {
+      textFiber.dom.nodeValue = element.props.nodeValue ?? "";
     }
-    textInstance.element = element;
-    return textInstance;
+    textFiber.element = element;
+    return textFiber;
   }
 
-  const domInstance = instance as DomInstance;
-  updateDomProperties(domInstance.dom, domInstance.element.props, element.props);
-  domInstance.childInstances = reconcileChildrenByKey(domInstance, element, rootContainer);
-  domInstance.element = element;
-  return domInstance;
+  const domFiber = fiber as DomFiber;
+  updateDomProperties(domFiber.dom, domFiber.element.props, element.props);
+  domFiber.childFibers = reconcileChildrenByKey(domFiber, element, rootContainer);
+  domFiber.element = element;
+  return domFiber;
 }
 
-function reconcileChildrenByKey(instance: DomInstance, element: ElementNode, rootContainer: Element): Instance[] {
-  const parentDom = instance.dom;
-  const oldChildInstances = instance.childInstances;
+function reconcileChildrenByKey(fiber: DomFiber, element: ReactElement, rootContainer: Element): Fiber[] {
+  const parentDom = fiber.dom;
+  const oldChildFibers = fiber.childFibers;
   const newChildElements = element.props.children || [];
 
-  const oldKeyed = new Map<Key, Instance>();
-  const oldUnkeyed: Instance[] = [];
+  const oldKeyed = new Map<Key, Fiber>();
+  const oldUnkeyed: Fiber[] = [];
 
-  for (const oldInstance of oldChildInstances) {
-    const oldKey = oldInstance.element.key;
+  for (const oldFiber of oldChildFibers) {
+    const oldKey = oldFiber.element.key;
     if (oldKey !== null && oldKey !== undefined) {
-      oldKeyed.set(oldKey, oldInstance);
+      oldKeyed.set(oldKey, oldFiber);
     } else {
-      oldUnkeyed.push(oldInstance);
+      oldUnkeyed.push(oldFiber);
     }
   }
 
   let unkeyedIndex = 0;
-  const nextChildInstances: Instance[] = [];
+  const nextChildFibers: Fiber[] = [];
 
   for (const childElement of newChildElements) {
     const key = childElement.key;
-    let matchedOld: Instance | null = null;
+    let matchedOld: Fiber | null = null;
 
     if (key !== null && key !== undefined) {
       matchedOld = oldKeyed.get(key) || null;
@@ -225,7 +230,7 @@ function reconcileChildrenByKey(instance: DomInstance, element: ElementNode, roo
     }
 
     const nextChild = reconcile(parentDom, matchedOld, childElement, rootContainer);
-    if (nextChild) nextChildInstances.push(nextChild);
+    if (nextChild) nextChildFibers.push(nextChild);
   }
 
   for (const leftover of oldKeyed.values()) {
@@ -237,8 +242,8 @@ function reconcileChildrenByKey(instance: DomInstance, element: ElementNode, roo
   }
 
   // Keep DOM order aligned with virtual children order.
-  for (let i = 0; i < nextChildInstances.length; i += 1) {
-    const childDom = nextChildInstances[i].dom;
+  for (let i = 0; i < nextChildFibers.length; i += 1) {
+    const childDom = nextChildFibers[i].dom;
     if (!childDom) continue;
     const domAtIndex = parentDom.childNodes[i] || null;
     if (childDom !== domAtIndex) {
@@ -246,33 +251,33 @@ function reconcileChildrenByKey(instance: DomInstance, element: ElementNode, roo
     }
   }
 
-  return nextChildInstances;
+  return nextChildFibers;
 }
 
-function instantiate(element: ElementNode | null, rootContainer: Element): Instance | null {
+function createFiber(element: ReactElement | null, rootContainer: Element): Fiber | null {
   if (element == null) return null;
 
   const { type, props } = element;
 
   if (typeof type === "function") {
-    const instance: FunctionInstance = {
+    const fiber: FunctionFiber = {
       element,
       dom: null,
-      childInstance: null,
+      childFiber: null,
       hooks: [],
       hookIndex: 0,
       rootContainer,
     };
 
-    const prevInstance = currentFunctionInstance;
-    currentFunctionInstance = instance;
+    const prevFiber = currentFunctionFiber;
+    currentFunctionFiber = fiber;
     const childElement = type(props);
-    currentFunctionInstance = prevInstance;
+    currentFunctionFiber = prevFiber;
 
-    const childInstance = instantiate(childElement, rootContainer);
-    instance.dom = childInstance ? childInstance.dom : null;
-    instance.childInstance = childInstance;
-    return instance;
+    const childFiber = createFiber(childElement, rootContainer);
+    fiber.dom = childFiber ? childFiber.dom : null;
+    fiber.childFiber = childFiber;
+    return fiber;
   }
 
   if (type === TEXT_ELEMENT) {
@@ -287,18 +292,18 @@ function instantiate(element: ElementNode | null, rootContainer: Element): Insta
   const dom = document.createElement(type);
   updateDomProperties(dom, {}, props);
 
-  const childInstances = props.children
-    .map((childElement) => instantiate(childElement, rootContainer))
-    .filter((childInstance): childInstance is Instance => Boolean(childInstance));
+  const childFibers = props.children
+    .map((childElement) => createFiber(childElement, rootContainer))
+    .filter((childFiber): childFiber is Fiber => Boolean(childFiber));
 
-  for (const childInstance of childInstances) {
-    if (childInstance.dom) dom.appendChild(childInstance.dom);
+  for (const childFiber of childFibers) {
+    if (childFiber.dom) dom.appendChild(childFiber.dom);
   }
 
   return {
     element,
     dom,
-    childInstances,
+    childFibers,
     rootContainer,
   };
 }

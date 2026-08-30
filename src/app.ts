@@ -1,4 +1,4 @@
-import { createElement as h, render, useState, type ElementNode } from "./mini-react.js";
+import { createElement as h, render, useState, type ReactElement } from "./mini-react.js";
 
 type Item = {
   id: string;
@@ -9,7 +9,7 @@ type CounterCardProps = {
   label: string;
 };
 
-function CounterCard({ label }: CounterCardProps): ElementNode {
+function CounterCard({ label }: CounterCardProps): ReactElement {
   const [count, setCount] = useState(0);
 
   return h(
@@ -36,7 +36,7 @@ function CounterCard({ label }: CounterCardProps): ElementNode {
   );
 }
 
-function App(): ElementNode {
+function App(): ReactElement {
   const [reverse, setReverse] = useState(false);
   const [items, setItems] = useState<Item[]>([
     { id: "a", label: "Alpha" },
